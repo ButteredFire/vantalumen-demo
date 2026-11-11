@@ -38,3 +38,35 @@ html, body, #root {
     letter-spacing: 2px;
     text-transform: uppercase;
 }
+
+
+
+.map-pin {
+    width: 16px;
+    height: 16px;
+    background-color: #00e5ff;
+    border-radius: 50%;
+    transform: translate(-50%, -50%); /* Centers the pin exactly on the coordinate */
+    cursor: pointer;
+    box-shadow: 0 0 15px #00e5ff, 0 0 30px #00e5ff;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.map-pin:hover {
+    transform: translate(-50%, -50%) scale(1.5);
+    box-shadow: 0 0 25px #ffffff, 0 0 50px #00e5ff;
+}
+
+.pin-label {
+    position: absolute;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: #00e5ff;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    letter-spacing: 2px;
+    white-space: nowrap;
+    text-shadow: 0 0 5px rgba(0,0,0,0.8);
+    pointer-events: none;
+}

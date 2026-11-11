@@ -1,42 +1,179 @@
 // App.jsx
-import React, { Suspense, useRef, useMemo, useState } from 'react';
+import React, { Suspense, useRef, useMemo, useState, useEffect } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { MapControls, useGLTF, Loader, Environment } from '@react-three/drei';
 import { EffectComposer, DepthOfField } from '@react-three/postprocessing';
 import * as THREE from 'three';
+import { Howl } from 'howler';
+import { Html } from '@react-three/drei';
+
 import './App.css';
+import './SciFi.css';
+
+
+
+import { motion, AnimatePresence } from 'framer-motion';
+
+// Animation logic for the main container
+const containerVariants = {
+    hidden: { 
+        opacity: 0, 
+        scale: 0.95,
+        filter: "brightness(1)"
+    },
+    visible: { 
+        opacity: 1, 
+        scale: 1,
+        // The flash effect: Brightness spikes to 2.5 then settles at 1
+        filter: ["brightness(1)", "brightness(2.5)", "brightness(1)"],
+        transition: { 
+            duration: 0.4, 
+            ease: "easeOut",
+            when: "beforeChildren", // Wait for container flash before showing children
+            staggerChildren: 0.15   // Show each child 150ms apart
+        }
+    },
+    exit: {
+        opacity: 0,
+        scale: 0.95,
+        transition: { duration: 0.2 }
+    }
+};
+
+// Animation logic for individual text elements/stats inside the container
+const itemVariants = {
+    hidden: { opacity: 0, x: -20 },
+    visible: { 
+        opacity: 1, 
+        x: 0, 
+        transition: { type: "spring", stiffness: 300, damping: 24 }
+    }
+};
+
+const uiSounds = {
+    open: new Howl({ src: ['/ui_popup.mp3'], volume: 0.01 }),
+    close: new Howl({ src: ['/ui_collapse.mp3'], volume: 0.01 }),
+    mouse: [
+        new Howl({ src: ['/ui_mouse_1.mp3'], volume: 0.01 }),
+        new Howl({ src: ['/ui_mouse_2.mp3'], volume: 0.01 }),
+        new Howl({ src: ['/ui_mouse_3.mp3'], volume: 0.01 }),
+        new Howl({ src: ['/ui_mouse_4.mp3'], volume: 0.01 })
+    ]
+};
+
+function SciFiUIContainer({ title, children, style, onClose }) {
+    // Play sounds on mount and unmount
+    React.useEffect(() => {
+        uiSounds.open.play();
+        return () => uiSounds.close.play();
+    }, []);
+
+    return (
+        <motion.div 
+            className="sci-fi-container"
+            style={style}
+            variants={containerVariants}
+            initial="hidden"
+            animate="visible"
+            exit="exit"
+        >
+            {/* Optional Close Button */}
+            {onClose && (
+                <button 
+                    onClick={onClose} 
+                    style={{ position: 'absolute', top: '10px', right: '10px', background: 'none', border: 'none', color: '#00e5ff', cursor: 'pointer', fontFamily: 'Courier New' }}
+                >
+                    [X]
+                </button>
+            )}
+            <motion.div variants={itemVariants} className="sci-fi-title">
+                {title}
+            </motion.div>
+            <div className="sci-fi-content">
+                {React.Children.map(children, child => (
+                    <motion.div variants={itemVariants}>
+                        {child}
+                    </motion.div>
+                ))}
+            </div>
+        </motion.div>
+    );
+}
+
+
+function EquipmentPin({ position, label, onClick }) {
+    const handleMouseEnter = () => {
+        // Generate a random number between 0 and 3
+        const randomIndex = Math.floor(Math.random() * uiSounds.mouse.length);
+        uiSounds.mouse[randomIndex].play();
+    };
+
+    return (
+        <Html position={position} zIndexRange={[100, 0]}>
+            <div 
+                className="map-pin" 
+                onClick={onClick}
+                onMouseEnter={handleMouseEnter}
+            >
+                <div className="pin-label">{label}</div>
+            </div>
+        </Html>
+    );
+}
+
+
 
 useGLTF.preload('/mars_terrain.glb');
+
 
 function MarsTerrain() {
     const { scene } = useGLTF('/mars_terrain.glb');
     return <primitive object={scene} position={[0, 0, 0]} />;
 }
 
+
 function MartianDust() {
     const pointsRef = useRef();
     const particleCount = 3000;
+    const particleSpeed = 100;
 
-    const particlesPosition = useMemo(() => {
+    const [particlesPosition, randomOffsets] = useMemo(() => {
         const positions = new Float32Array(particleCount * 3);
-        const startHeight = 3.0;
+        const offsets = new Float32Array(particleCount); // Store individual speed/phase offsets for variety
+
         for (let i = 0; i < particleCount; i++) {
-            positions[i * 3] = (Math.random() - 0.5) * 2000;
-            positions[i * 3 + 1] = startHeight + Math.random() * 60;
-            positions[i * 3 + 2] = (Math.random() - 0.5) * 1000;
+            positions[i * 3] = (Math.random() - 0.5) * 2000;     // X: -1000 to 1000
+            positions[i * 3 + 1] = 3.0 + Math.random() * 60;     // Y: height
+            positions[i * 3 + 2] = (Math.random() - 0.5) * 1000; // Z: -500 to 500
+            
+            offsets[i] = Math.random() * 0.5 + 0.75; // Speed multiplier variance
         }
-        return positions;
+        return [positions, offsets];
     }, [particleCount]);
 
     useFrame((state, delta) => {
         if (pointsRef.current) {
             const positions = pointsRef.current.geometry.attributes.position.array;
+            
             for (let i = 0; i < particleCount; i++) {
-                positions[i * 3] -= 15 * delta;
-                positions[i * 3 + 2] -= 5 * delta;
+                const speed = particleSpeed * randomOffsets[i];
+                
+                // Move particles along X and Z
+                positions[i * 3] -= speed * delta;
+                positions[i * 3 + 2] -= (speed / 3) * delta;
 
-                if (positions[i * 3] < -1000) positions[i * 3] = 1000;
-                if (positions[i * 3 + 2] < -500) positions[i * 3 + 2] = 500;
+                // Recycle smoothly: when it crosses the left boundary, 
+                // respawn it on the right side with a randomized Z depth.
+                if (positions[i * 3] < -1000) {
+                    positions[i * 3] = 1000;
+                    positions[i * 3 + 2] = (Math.random() - 0.5) * 1000;
+                    positions[i * 3 + 1] = 3.0 + Math.random() * 60; // Optional: re-randomize height too
+                }
+                
+                // Also wrap Z if it goes out of bounds
+                if (positions[i * 3 + 2] < -500) {
+                    positions[i * 3 + 2] = 500;
+                }
             }
             pointsRef.current.geometry.attributes.position.needsUpdate = true;
         }
@@ -53,10 +190,10 @@ function MartianDust() {
                 />
             </bufferGeometry>
             <pointsMaterial 
-                size={1.5} 
+                size={3.0} 
                 color="#f0784f" 
                 transparent={true} 
-                opacity={0.4} 
+                opacity={0.8} 
                 sizeAttenuation={true} 
                 depthWrite={false} 
             />
@@ -64,9 +201,9 @@ function MartianDust() {
     );
 }
 
-function CustomMapControls() {
+
+function CustomMapControls({ focusTarget }) {
     const controlsRef = useRef();
-    
     const limitX = 1000 / 1.5; 
     const limitZ = 500 / 1.5; 
 
@@ -76,32 +213,42 @@ function CustomMapControls() {
             const camera = state.camera;
             const target = controls.target;
 
+            // DYNAMIC ZOOM TILT (Remains the same)
             const distance = camera.position.distanceTo(target);
-            
-            // 1. RESTRICTED ZOOM TILT LOGIC
-            // The mapping floor is raised to 450 to match the new minDistance.
-            // The angle shift is made slightly more subtle to reflect the shorter zoom travel.
             const targetAngle = THREE.MathUtils.mapLinear(
-                distance, 
-                450, 800,                       
-                Math.PI / 3.2, Math.PI / 4.2    
+                distance, 450, 800, Math.PI / 3.2, Math.PI / 4.2    
             );
-            
             controls.minPolarAngle = targetAngle;
             controls.maxPolarAngle = targetAngle;
 
-            const clampedX = THREE.MathUtils.clamp(target.x, -limitX, limitX);
-            const clampedZ = THREE.MathUtils.clamp(target.z, -limitZ, limitZ);
+            // IF A PIN IS CLICKED: Smoothly pan the target to the pin's coordinates
+            if (focusTarget) {
+                // Lerp (Linear Interpolate) moves the camera 3% towards the target every frame
+                target.x = THREE.MathUtils.lerp(target.x, focusTarget[0], 0.03);
+                target.z = THREE.MathUtils.lerp(target.z, focusTarget[2], 0.03);
+                
+                // Optional: Slightly pull the camera in closer for inspection
+                const zoomTarget = 500; 
+                if (distance > zoomTarget) {
+                    camera.position.lerp(
+                        new THREE.Vector3(camera.position.x, camera.position.y - 10, camera.position.z), 
+                        0.02
+                    );
+                }
+            } 
+            // STANDARD BOUNDARY CLAMP: Only applies if the user is free-roaming
+            else {
+                const clampedX = THREE.MathUtils.clamp(target.x, -limitX, limitX);
+                const clampedZ = THREE.MathUtils.clamp(target.z, -limitZ, limitZ);
 
-            if (target.x !== clampedX || target.z !== clampedZ) {
-                const diffX = clampedX - target.x;
-                const diffZ = clampedZ - target.z;
-                
-                target.x = clampedX;
-                target.z = clampedZ;
-                
-                camera.position.x += diffX;
-                camera.position.z += diffZ;
+                if (target.x !== clampedX || target.z !== clampedZ) {
+                    const diffX = clampedX - target.x;
+                    const diffZ = clampedZ - target.z;
+                    target.x = clampedX;
+                    target.z = clampedZ;
+                    camera.position.x += diffX;
+                    camera.position.z += diffZ;
+                }
             }
         }
     });
@@ -111,18 +258,16 @@ function CustomMapControls() {
             ref={controlsRef}
             makeDefault
             enableDamping={true}
-            // 2. BUTTERY ZOOM INTERPOLATION
-            // Lowering dampingFactor creates longer inertia tails
             dampingFactor={0.01} 
             enableRotate={false}
-            // Raised minDistance drastically to hover high above the terrain
             minDistance={450} 
-            maxDistance={800}
+            maxDistance={1000}
             minAzimuthAngle={0}
             maxAzimuthAngle={0}
-            // Lowering zoomSpeed neutralizes the snappy wheel steps
             zoomSpeed={0.25} 
             panSpeed={0.8}
+            // Temporarily disable user panning if a cinematic swoop is happening
+            enabled={!focusTarget} 
         />
     );
 }
@@ -187,60 +332,167 @@ function FogLayer() {
         </mesh>
     )
 }
+
+
+function useAmbientAudio(src, play, volume = 0.4, fadeDuration = 2000) {
+    const soundRef = useRef(null);
+    const soundIdRef = useRef(null);
+
+    useEffect(() => {
+        // Initialize the Web Audio API sound
+        const sound = new Howl({
+            src: [src],
+            loop: true,
+            volume: 0, // Start at 0 for the fade-in
+            html5: false,
+            onload: () => {
+                // If 'play' became true while it was still loading, start playing now
+                if (play && !sound.playing()) {
+                    soundIdRef.current = sound.play();
+                    sound.fade(0, volume, fadeDuration, soundIdRef.current);
+                }
+            }
+        });
+
+        soundRef.current = sound;
+
+        return () => {
+            sound.unload(); // Clean up memory on unmount
+        };
+    }, [src]);
+
+    useEffect(() => {
+        const sound = soundRef.current;
+        if (!sound) return;
+
+        if (play) {
+            // Only play if not already playing to prevent overlapping instances
+            if (!sound.playing()) {
+                soundIdRef.current = sound.play();
+                sound.fade(0, volume, fadeDuration, soundIdRef.current);
+            }
+        } else {
+            // If it's playing, fade out and stop
+            if (sound.playing() && soundIdRef.current !== null) {
+                sound.fade(sound.volume(soundIdRef.current), 0, fadeDuration, soundIdRef.current);
+                
+                const currentId = soundIdRef.current;
+                setTimeout(() => {
+                    sound.stop(currentId);
+                }, fadeDuration);
+            }
+        }
+    }, [play, volume, fadeDuration]);
+}
+
   
 
 
 export default function App() {
     // State to track if the user has clicked to enter the experience
     const [entered, setEntered] = useState(false);
-    const audioRef = useRef(null);
+    const [selectedEquipment, setSelectedEquipment] = useState(null);
 
-    const handleEnter = () => {
-        setEntered(true);
-        if (audioRef.current) {
-            audioRef.current.volume = 0.4;
-            audioRef.current.play();
-        }
-    };
+    // Mounts the audio in memory and fades it in when 'entered' becomes true
+    useAmbientAudio('/mars_ambience.mp3', entered, 0.1, 3000);
+
+    // Hardcoded relative position for Beagle 2 in Isidis Planitia 
+    // (Adjust these coordinates based on where your specific mesh looks best)
+    const beagle2Coords = [0, 10, 0];
 
     return (
         <div className="canvas-container">
-            {/* 3. MARTIAN AMBIENCE */}
-            <audio ref={audioRef} src="/martian_wind.mp3" loop />
-
             <div className="vignette-overlay"></div>
             
-            {/* Overlay that blocks the screen until the user clicks, bypassing audio autoplay blocks */}
-            {!entered && (
-                <div className="enter-overlay" style={{
-                    position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
-                    display: 'flex', justifyContent: 'center', alignItems: 'center',
-                    backgroundColor: 'rgba(5, 5, 5, 0.85)', zIndex: 50, backdropFilter: 'blur(5px)'
-                }}>
-                    <button 
-                        onClick={handleEnter}
+            <AnimatePresence>
+                {!entered && (
+                    <motion.div 
+                        key="start-screen"
+                        className="enter-overlay"
+                        initial={{ opacity: 1 }}
+                        exit={{ opacity: 0, filter: "blur(10px)" }}
+                        transition={{ duration: 1.5 }}
                         style={{
-                            padding: '15px 40px', background: 'transparent', color: '#ff4d00',
-                            border: '1px solid #ff4d00', cursor: 'pointer', letterSpacing: '3px',
-                            fontFamily: 'sans-serif', textTransform: 'uppercase', transition: '0.3s'
+                            position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
+                            display: 'flex', justifyContent: 'center', alignItems: 'center',
+                            backgroundColor: 'rgba(5, 5, 5, 0.9)', zIndex: 50
                         }}
                     >
-                        Initiate Uplink
-                    </button>
-                </div>
-            )}
+                        <button 
+                            onClick={() => setEntered(true)}
+                            className='sci-fi-button'
+                        >
+                            <span>Initiate Demo</span>
+                        </button>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
+            {/* Render the futuristic UI only after entering */}
+            <AnimatePresence>
+                {entered && (
+                    <div style={{ position: 'absolute', top: '40px', left: '40px', zIndex: 20 }}>
+                        <SciFiUIContainer title="Project VantaLumen" style={{ width: '300px', marginBottom: '20px' }}>
+                            <p>LOCATION: ISIDIS PLANITIA, MARS</p>
+                            <p>HQ: VANTALUMEN</p>
+                            <p>ATMOSPHERE: 95% CO2</p>
+                            <p>SURFACE TEMP: -60°C</p>
+                            <p className="sci-fi-blinking-text">AWAITING TARGET SELECTION...</p>
+                        </SciFiUIContainer>
+
+                        {/* A second container will naturally render with the same flash/stagger */}
+                        {/*
+                        <SciFiUIContainer title="Attributions" style={{ width: '300px' }}>
+                            <p>AMBIENCE: </p>
+                            <p>DEGRADATION: 14%</p>
+                        </SciFiUIContainer>
+                        */}
+                    </div>
+                )}
+            </AnimatePresence>
 
             {entered && (
-                <div className="ui-layer">
+                <div className="ui-layer sci-fi-subtitle">
                     <p>MARTIAN TERRAIN</p>
                 </div>
-            )}
+            )}  
 
-            <Canvas camera={{ fov: 15, position: [0, 600, 800], near: 0.1, far: 4000 }}>
+
+            <AnimatePresence>
+                {/* Pop up the specific equipment data when a pin is clicked */}
+                {selectedEquipment && (
+                    <div style={{ position: 'absolute', top: '40px', right: '40px', zIndex: 20 }}>
+                        <SciFiUIContainer 
+                            title="BEAGLE 2 LANDER" 
+                            style={{ width: '350px' }}
+                            onClose={() => setSelectedEquipment(null)} // User can close the panel to free-roam again
+                        >
+                            <p>LAT/LON: 11.53°N, 90.43°E</p>
+                            <p>STATUS: DORMANT (Since Dec 25, 2003)</p>
+                            <p>MISSION: Astrobiology & Exobiology</p>
+                            <br/>
+                            <p style={{ color: '#aaa' }}>
+                                Found 11 years after contact was lost. Partially deployed solar panels blocked its communications antenna, leaving it stranded but intact on the surface.
+                            </p>
+                        </SciFiUIContainer>
+                    </div>
+                )}
+            </AnimatePresence>
+
+
+
+            <Canvas camera={{ fov: 12, position: [0, 800, 1000], near: 0.1, far: 4000 }}>
                 <color attach="background" args={['#c7a47b']} />
-                <fog attach="fog" args={['#c7a47b', 800, 1100]} />
+                <fog attach="fog" args={['#c7a47b', 980, 1100]} />
 
                 <Suspense fallback={null}>
+                    {/* Render the Pin on the map. Render this conditionally if you want it to hide when clicked */}
+                    <EquipmentPin 
+                        position={beagle2Coords} 
+                        label="SIG-01: BEAGLE 2" 
+                        onClick={() => setSelectedEquipment(beagle2Coords)} 
+                    />
+
                     <MarsTerrain />
                     <MartianDust />
                     <Environment preset="sunset" environmentIntensity={0.6} />
@@ -256,8 +508,8 @@ export default function App() {
                     </EffectComposer>
                 </Suspense>
 
-                {/* Controls only activate once the user enters */}
-                {entered && <CustomMapControls />}
+                {/* Pass the selected equipment state to the controls to trigger the swoop */}
+                {entered && <CustomMapControls focusTarget={selectedEquipment} />}
             </Canvas>
 
             <Loader 
