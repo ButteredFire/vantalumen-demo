@@ -1,11 +1,10 @@
 // App.jsx
 import React, { Suspense, useRef, useMemo, useState, useEffect } from 'react';
-import { Canvas, useFrame } from '@react-three/fiber';
-import { MapControls, useGLTF, Loader, Environment } from '@react-three/drei';
+import { Canvas, useFrame, extend } from '@react-three/fiber';
+import { Html, MapControls, useGLTF, Loader, Environment, shaderMaterial } from '@react-three/drei';
 import { EffectComposer, DepthOfField } from '@react-three/postprocessing';
 import * as THREE from 'three';
 import { Howl } from 'howler';
-import { Html } from '@react-three/drei';
 
 import './App.css';
 import './SciFi.css';
@@ -61,6 +60,65 @@ const uiSounds = {
         new Howl({ src: ['/ui_mouse_4.mp3'], volume: 0.01 })
     ]
 };
+
+
+// 1. Define a custom soft-edge fog shader material
+const FogPlaneMaterial = shaderMaterial(
+    { 
+      uTime: 0, 
+      uColor: new THREE.Color('#ffd6b0') 
+    },
+    // Vertex Shader
+    /* glsl */`
+        varying vec2 vUv;
+        void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+    `,
+    // Fragment Shader
+    /* glsl */`
+        varying vec2 vUv;
+        uniform vec3 uColor;
+        uniform float uTime;
+
+        // Simple 2D pseudo-noise function
+        float random(vec2 st) {
+            return fract(sin(dot(st.xy, vec2(12.9898, 78.233))) * 43758.5453123);
+        }
+
+        float noise(vec2 st) {
+            vec2 i = floor(st);
+            vec2 f = fract(st);
+            float a = random(i);
+            float b = random(i + vec2(1.0, 0.0));
+            float c = random(i + vec2(0.0, 1.0));
+            float d = random(i + vec2(1.0, 1.0));
+            vec2 u = f * f * (3.0 - 2.0 * f);
+            return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+        }
+
+        void main() {
+            // Center-based edge fade so borders stay soft
+            vec2 center = vUv - 0.5;
+            float dist = length(center) * 2.0;
+            float edgeFade = smoothstep(1.0, 0.2, dist); 
+
+            // Scroll the noise coordinates over time to make the fog drift
+            vec2 scrolledUv = vUv * 3.0 + vec2(uTime * 0.03, uTime * 0.015);
+            float n = noise(scrolledUv);
+
+            // Combine noise variation with the base opacity and edge fade
+            float alpha = 0.12 * edgeFade * (0.5 + 0.5 * n);
+
+            gl_FragColor = vec4(uColor, alpha);
+        }
+    `
+)
+  
+// Register the material so R3F recognizes it as <fogPlaneMaterial />
+extend({ FogPlaneMaterial })
+
 
 function SciFiUIContainer({ title, important, children, style, onClose }) {
     // Play sounds on mount and unmount
@@ -275,61 +333,30 @@ function CustomMapControls({ focusTarget }) {
 }
 
 
-function FogLayer() {
+export function MartianFog() {
     const materialRef = useRef()
-
-    // Optional: Animate the fog texture coordinates over time to make it drift
+  
+    // Optional: animate time if you want to add noise/movement later
     useFrame((state) => {
         if (materialRef.current) {
-            materialRef.current.uniforms.uTime.value = state.clock.getElapsedTime()
+            materialRef.current.uTime = state.clock.elapsedTime
         }
     })
-
+  
     return (
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 3, 0]}>
-            {/* Make the fog plane large enough to cover your scene view */}
-            <planeGeometry args={[1000, 500, 128, 128]} />
-            <shaderMaterial
-                ref={materialRef}
-                transparent
-                depthWrite={false} // Prevents the fog plane from clipping weirdly with objects behind it
-                uniforms={{
-                    uTime: { value: 0 },
-                    uFogColor: { value: [0.8, 0.8, 0.8] }, // Light gray/white mist
-                }}
-                vertexShader={`
-                    varying vec2 vUv;
-                    void main() {
-                        vUv = uv;
-                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-                    }
-                `}
-                fragmentShader={`
-                    uniform float uTime;
-                    uniform vec3 uFogColor;
-                    varying vec2 vUv;
-
-                    // Simple procedural noise function for the mist texture
-                    float noise(vec2 p) {
-                        return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
-                    }
-
-                    void main() {
-                        // Create a soft circular fade so the fog doesn't have hard square edges
-                        float edgeFade = smoothstep(0.5, 0.2, length(vUv - 0.5));
-
-                        // Generate a moving mist pattern using noise coordinates shifted by time
-                        vec2 drift1 = vUv * 5.0 + vec2(uTime * 0.05, uTime * 0.02);
-                        vec2 drift2 = vUv * 10.0 - vec2(uTime * 0.02, uTime * 0.07);
-
-                        float n = (noise(floor(drift1)) + noise(floor(drift2))) * 0.5;
-
-                        // Final opacity blends the noise pattern with the edge fadeout
-                        float alpha = n * edgeFade * 0.6; // Adjust 0.6 to change max opacity
-
-                        gl_FragColor = vec4(uFogColor, alpha);
-                    }
-                `}
+        <mesh 
+            rotation={[-Math.PI / 2, 0, 0]} 
+            position={[0, 200, 0]} // Placed slightly above 0 to prevent z-fighting with ground
+        >
+            {/* 1000x500 plane with high segment density if needed for displacement later */}
+            <planeGeometry args={[5000, 5000, 16, 16]} />
+            <fogPlaneMaterial 
+                ref={materialRef} 
+                transparent={true} 
+                depthWrite={false} 
+                blending={THREE.NormalBlending}
+                // renderOrder ensures it draws cleanly relative to post-processing/terrain
+                renderOrder={999}
             />
         </mesh>
     )
@@ -398,21 +425,17 @@ export default function App() {
     // Mounts the audio in memory and fades it in when 'entered' becomes true
     useAmbientAudio('/mars_ambience.mp3', entered, 0.1, 3000);
 
-    // Hardcoded relative position for Beagle 2 in Isidis Planitia 
-    // (Adjust these coordinates based on where your specific mesh looks best)
-    const beagle2Coords = [0, 10, 0];
-
     const equipmentData = [
         {
             name: "Beagle 2 Lander",
-            coords: [-34, 10, 15],
+            coords: [-34, 0, 15],
             status: "DORMANT (Since Dec 25, 2003)",
             mission: "Astrobiology & Exobiology",
             description: "Found 11 years after contact was lost. Partially deployed solar panels blocked its communications antenna, leaving it stranded but intact on the surface."
         },
         {
             name: "Perseverance Rover",
-            coords: [40, 10, -35],
+            coords: [40, 0, -35],
             status: "DORMANT (Since Dec 25, 2003)",
             mission: "Astrobiology & Exobiology",
             description: "The rover remains in excellent condition as it scales the rim of Jezero Crater, exploring ancient, 4-billion-year-old hydrothermally altered terrains."
@@ -501,7 +524,6 @@ export default function App() {
 
             <Canvas camera={{ fov: 12, position: [0, 800, 1000], near: 0.1, far: 4000 }}>
                 <color attach="background" args={['#c7a47b']} />
-                <fog attach="fog" args={['#c7a47b', 980, 1100]} />
 
                 <Suspense fallback={null}>
                     {/* Render the Pin on the map. Render this conditionally if you want it to hide when clicked */}
@@ -524,6 +546,7 @@ export default function App() {
 
                     <MarsTerrain />
                     <MartianDust />
+                    <MartianFog />
                     <Environment preset="sunset" environmentIntensity={0.6} />
                     <directionalLight position={[100, 80, 50]} intensity={0.5} color="#ffd4b8" />
                     
