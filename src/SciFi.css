@@ -12,6 +12,7 @@
     font-family: 'Courier New', Courier, monospace;
     overflow: hidden;
     position: relative;
+    z-index: 50;
 }
 
 /* The scanline decorative element */

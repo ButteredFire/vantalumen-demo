@@ -169,7 +169,7 @@ function EquipmentPin({ loaded, position, label, onClick }) {
     };
 
     return (
-        <Html position={position} zIndexRange={[100, 0]}>
+        <Html position={position} zIndexRange={[10, 0]}>
             <div 
                 className={`map-pin ${loaded ? 'on-load' : ''}`}
                 onClick={onClick}
@@ -414,6 +414,27 @@ function useAmbientAudio(src, play, volume = 0.4, fadeDuration = 2000) {
     }, [play, volume, fadeDuration]);
 }
 
+
+/* Converts latitude (N) and longitude (E) to map coordinates */
+function latLonToMapCoords(lat, lon) {
+    // 1. Normalize longitude to [0, 360), then shift to the [-180, 180] range 
+    // centered on the Prime Meridian (0° is at the center of the map).
+    let normalizedLon = ((lon % 360) + 360) % 360;
+    if (normalizedLon > 180) {
+        normalizedLon -= 360;
+    }
+
+    // 2. Map longitude (-180 to 180) to X (-1000 to 1000)
+    // Positive East longitude moves to the right (+X)
+    const x = (normalizedLon / 180) * 1000;
+
+    // 3. Map latitude (90 North to -90 South) to Z (-500 to 500)
+    // North (+90) is at the top (-500), South (-90) is at the bottom (500)
+    const z = -(lat / 90) * 500;
+
+    return [x, 0, z];
+}
+
   
 
 
@@ -422,25 +443,57 @@ export default function App() {
     const [entered, setEntered] = useState(false);
     const [selectedEquipment, setSelectedEquipment] = useState(null);
 
-    // Mounts the audio in memory and fades it in when 'entered' becomes true
-    useAmbientAudio('/mars_ambience.mp3', entered, 0.1, 3000);
 
-    const equipmentData = [
+    const [equipmentData, setEquipmentData] = useState([
         {
             name: "Beagle 2 Lander",
-            coords: [-34, 0, 15],
+            realCoords: { lat: 12.9, lon: 87.0 },
             status: "DORMANT (Since Dec 25, 2003)",
             mission: "Astrobiology & Exobiology",
             description: "Found 11 years after contact was lost. Partially deployed solar panels blocked its communications antenna, leaving it stranded but intact on the surface."
         },
         {
             name: "Perseverance Rover",
-            coords: [40, 0, -35],
-            status: "DORMANT (Since Dec 25, 2003)",
+            realCoords: { lat: 18.447, lon: 77.402 },
+            status: "ACTIVE",
             mission: "Astrobiology & Exobiology",
             description: "The rover remains in excellent condition as it scales the rim of Jezero Crater, exploring ancient, 4-billion-year-old hydrothermally altered terrains."
         },
-    ];
+        /*
+        {
+            name: "Utopia Planitia",
+            realCoords: { lat: 46.7, lon: 117.5 },
+            status: "ACTIVE",
+            mission: "Astrobiology & Exobiology",
+            description: "The rover remains in excellent condition as it scales the rim of Jezero Crater, exploring ancient, 4-billion-year-old hydrothermally altered terrains."
+        },
+        {
+            name: "Olympus Mons",
+            realCoords: { lat: 18.39, lon: 226.12 },
+            status: "ACTIVE",
+            mission: "Astrobiology & Exobiology",
+            description: "The rover remains in excellent condition as it scales the rim of Jezero Crater, exploring ancient, 4-billion-year-old hydrothermally altered terrains."
+        },
+        */
+    ]);
+
+    // Calculate map coordinates based on real coordinates
+    useEffect(() => {
+        for (let i = 0; i < equipmentData.length; i++) {
+            const eq = equipmentData[i];
+            eq.coords = latLonToMapCoords(eq.realCoords.lat, eq.realCoords.lon);
+            equipmentData[i] = eq;
+        }
+
+        setEquipmentData(equipmentData);
+    }, []);
+
+    useEffect(() => {console.log("selected:",selectedEquipment)}, [selectedEquipment]);
+
+
+    // Mounts the audio in memory and fades it in when 'entered' becomes true
+    useAmbientAudio('/mars_ambience.mp3', entered, 0.1, 3000);
+
 
     return (
         <div className="canvas-container">
@@ -510,7 +563,7 @@ export default function App() {
                             style={{ width: '350px' }}
                             onClose={() => setSelectedEquipment(null)} // User can close the panel to free-roam again
                         >
-                            <p>LAT/LON: 11.53°N, 90.43°E</p>
+                            <p>COORDINATES: {selectedEquipment.realCoords.lat}°N, {selectedEquipment.realCoords.lon}°E</p>
                             <p>STATUS: {selectedEquipment.status}</p>
                             <p>MISSION: {selectedEquipment.mission}</p>
                             <br/>
@@ -562,8 +615,12 @@ export default function App() {
 
                 {/* Pass the selected equipment state to the controls to trigger the swoop */}
                 {entered && (
-                    <CustomMapControls 
-                        focusTarget={selectedEquipment ? selectedEquipment.coords : null} 
+                    <CustomMapControls
+                        focusTarget={
+                            selectedEquipment ? 
+                            selectedEquipment.coords
+                            : null
+                        } 
                     />
                 )}
             </Canvas>
