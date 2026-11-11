@@ -52,6 +52,7 @@ const itemVariants = {
 
 const uiSounds = {
     open: new Howl({ src: ['/ui_popup.mp3'], volume: 0.01 }),
+    openImportant: new Howl({ src: ['/ui_popup_important.mp3'], volume: 0.01 }),
     close: new Howl({ src: ['/ui_collapse.mp3'], volume: 0.01 }),
     mouse: [
         new Howl({ src: ['/ui_mouse_1.mp3'], volume: 0.01 }),
@@ -61,10 +62,11 @@ const uiSounds = {
     ]
 };
 
-function SciFiUIContainer({ title, children, style, onClose }) {
+function SciFiUIContainer({ title, important, children, style, onClose }) {
     // Play sounds on mount and unmount
     React.useEffect(() => {
-        uiSounds.open.play();
+        if (important)      uiSounds.openImportant.play();
+        else                uiSounds.open.play();
         return () => uiSounds.close.play();
     }, []);
 
@@ -101,7 +103,7 @@ function SciFiUIContainer({ title, children, style, onClose }) {
 }
 
 
-function EquipmentPin({ position, label, onClick }) {
+function EquipmentPin({ loaded, position, label, onClick }) {
     const handleMouseEnter = () => {
         // Generate a random number between 0 and 3
         const randomIndex = Math.floor(Math.random() * uiSounds.mouse.length);
@@ -111,7 +113,7 @@ function EquipmentPin({ position, label, onClick }) {
     return (
         <Html position={position} zIndexRange={[100, 0]}>
             <div 
-                className="map-pin" 
+                className={`map-pin ${loaded ? 'on-load' : ''}`}
                 onClick={onClick}
                 onMouseEnter={handleMouseEnter}
             >
@@ -400,6 +402,23 @@ export default function App() {
     // (Adjust these coordinates based on where your specific mesh looks best)
     const beagle2Coords = [0, 10, 0];
 
+    const equipmentData = [
+        {
+            name: "Beagle 2 Lander",
+            coords: [-34, 10, 15],
+            status: "DORMANT (Since Dec 25, 2003)",
+            mission: "Astrobiology & Exobiology",
+            description: "Found 11 years after contact was lost. Partially deployed solar panels blocked its communications antenna, leaving it stranded but intact on the surface."
+        },
+        {
+            name: "Perseverance Rover",
+            coords: [40, 10, -35],
+            status: "DORMANT (Since Dec 25, 2003)",
+            mission: "Astrobiology & Exobiology",
+            description: "The rover remains in excellent condition as it scales the rim of Jezero Crater, exploring ancient, 4-billion-year-old hydrothermally altered terrains."
+        },
+    ];
+
     return (
         <div className="canvas-container">
             <div className="vignette-overlay"></div>
@@ -463,17 +482,16 @@ export default function App() {
                 {selectedEquipment && (
                     <div style={{ position: 'absolute', top: '40px', right: '40px', zIndex: 20 }}>
                         <SciFiUIContainer 
-                            title="BEAGLE 2 LANDER" 
+                            important={true}
+                            title={selectedEquipment.name.toUpperCase()}
                             style={{ width: '350px' }}
                             onClose={() => setSelectedEquipment(null)} // User can close the panel to free-roam again
                         >
                             <p>LAT/LON: 11.53°N, 90.43°E</p>
-                            <p>STATUS: DORMANT (Since Dec 25, 2003)</p>
-                            <p>MISSION: Astrobiology & Exobiology</p>
+                            <p>STATUS: {selectedEquipment.status}</p>
+                            <p>MISSION: {selectedEquipment.mission}</p>
                             <br/>
-                            <p style={{ color: '#aaa' }}>
-                                Found 11 years after contact was lost. Partially deployed solar panels blocked its communications antenna, leaving it stranded but intact on the surface.
-                            </p>
+                            <p style={{ color: '#aaa' }}>{selectedEquipment.description}</p>
                         </SciFiUIContainer>
                     </div>
                 )}
@@ -487,11 +505,22 @@ export default function App() {
 
                 <Suspense fallback={null}>
                     {/* Render the Pin on the map. Render this conditionally if you want it to hide when clicked */}
-                    <EquipmentPin 
-                        position={beagle2Coords} 
-                        label="SIG-01: BEAGLE 2" 
-                        onClick={() => setSelectedEquipment(beagle2Coords)} 
-                    />
+                    {equipmentData.map(
+                        (eq, idx) => (
+                            <EquipmentPin
+                                key={idx}
+                                loaded={entered}
+                                label={eq.name.toUpperCase()}
+                                position={eq.coords} 
+                                onClick={() => {
+                                    if (selectedEquipment) {
+                                        uiSounds.openImportant.play();
+                                    }
+                                    setSelectedEquipment(eq);
+                                }} 
+                            />
+                        )
+                    )}
 
                     <MarsTerrain />
                     <MartianDust />
@@ -509,7 +538,11 @@ export default function App() {
                 </Suspense>
 
                 {/* Pass the selected equipment state to the controls to trigger the swoop */}
-                {entered && <CustomMapControls focusTarget={selectedEquipment} />}
+                {entered && (
+                    <CustomMapControls 
+                        focusTarget={selectedEquipment ? selectedEquipment.coords : null} 
+                    />
+                )}
             </Canvas>
 
             <Loader 

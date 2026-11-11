@@ -46,15 +46,26 @@ html, body, #root {
     height: 16px;
     background-color: #00e5ff;
     border-radius: 50%;
-    transform: translate(-50%, -50%); /* Centers the pin exactly on the coordinate */
+    transform: translate(-50%, 50%);
     cursor: pointer;
     box-shadow: 0 0 15px #00e5ff, 0 0 30px #00e5ff;
-    transition: transform 0.2s, box-shadow 0.2s;
+    opacity: 0;
+    transition: transform 0.2s, box-shadow 0.2s, opacity 0.8s;
+}
+
+.map-pin:not(.on-load) {
+    /* Optional: Prevents any weird jumps before the class is added */
+}
+.map-pin.on-load {
+    opacity: 1;
+    transform: translate(-50%, -50%); /* Centers the pin exactly on the coordinate */
+    transition: transform 1.0s, opacity 0.8s, box-shadow 1.0s;
 }
 
 .map-pin:hover {
     transform: translate(-50%, -50%) scale(1.5);
     box-shadow: 0 0 25px #ffffff, 0 0 50px #00e5ff;
+    transition: transform 0.2s, box-shadow 0.2s;
 }
 
 .pin-label {
