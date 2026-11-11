@@ -1,19 +1,21 @@
-// App.jsx
 import React, { Suspense, useRef, useMemo, useState, useEffect } from 'react';
 import { Canvas, useFrame, extend } from '@react-three/fiber';
 import { Html, MapControls, useGLTF, Loader, Environment, shaderMaterial } from '@react-three/drei';
 import { EffectComposer, DepthOfField } from '@react-three/postprocessing';
 import * as THREE from 'three';
 import { Howl } from 'howler';
+import { motion, AnimatePresence } from 'framer-motion';
 
 import './App.css';
 import './SciFi.css';
 
 
+// Preload geometry
+useGLTF.preload('/mars_terrain.glb');
 
-import { motion, AnimatePresence } from 'framer-motion';
 
-// Animation logic for the main container
+
+// ========== SCI-FI CONTAINER ANIMATION LOGIC & PROPERTIES ==========
 const containerVariants = {
     hidden: { 
         opacity: 0, 
@@ -49,20 +51,23 @@ const itemVariants = {
     }
 };
 
+
+// ========== SOUND EFFECTS ==========
 const uiSounds = {
     open: new Howl({ src: ['/ui_popup.mp3'], volume: 0.01 }),
     openImportant: new Howl({ src: ['/ui_popup_important.mp3'], volume: 0.01 }),
     close: new Howl({ src: ['/ui_collapse.mp3'], volume: 0.01 }),
+    error: new Howl({ src: ['/ui_error.mp3'], volume: 0.1 }),
     mouse: [
-        new Howl({ src: ['/ui_mouse_1.mp3'], volume: 0.01 }),
-        new Howl({ src: ['/ui_mouse_2.mp3'], volume: 0.01 }),
-        new Howl({ src: ['/ui_mouse_3.mp3'], volume: 0.01 }),
-        new Howl({ src: ['/ui_mouse_4.mp3'], volume: 0.01 })
+        new Howl({ src: ['/ui_mouse_1.mp3'], volume: 0.05 }),
+        new Howl({ src: ['/ui_mouse_2.mp3'], volume: 0.05 }),
+        new Howl({ src: ['/ui_mouse_3.mp3'], volume: 0.05 }),
+        new Howl({ src: ['/ui_mouse_4.mp3'], volume: 0.05 })
     ]
 };
 
 
-// 1. Define a custom soft-edge fog shader material
+// ========== CUSTOM SOFT-EDGE FOG SHADER ==========
 const FogPlaneMaterial = shaderMaterial(
     { 
       uTime: 0, 
@@ -120,7 +125,96 @@ const FogPlaneMaterial = shaderMaterial(
 extend({ FogPlaneMaterial })
 
 
-function SciFiUIContainer({ title, important, children, style, onClose }) {
+
+// ========== HELPER FUNCTIONS ==========
+
+/* Plays a random sci-fi mouse sound (e.g., for hover sfx) */
+function playSciFiMouseSound() {
+    const randomIndex = Math.floor(Math.random() * uiSounds.mouse.length);
+    uiSounds.mouse[randomIndex].play();
+}
+
+
+/* Ambience audio loader helper */
+function useAmbientAudio(src, play, volume = 0.4, fadeDuration = 2000) {
+    const soundRef = useRef(null);
+    const soundIdRef = useRef(null);
+
+    useEffect(() => {
+        // Initialize the Web Audio API sound
+        const sound = new Howl({
+            src: [src],
+            loop: true,
+            volume: 0, // Start at 0 for the fade-in
+            html5: false,
+            onload: () => {
+                // If 'play' became true while it was still loading, start playing now
+                if (play && !sound.playing()) {
+                    soundIdRef.current = sound.play();
+                    sound.fade(0, volume, fadeDuration, soundIdRef.current);
+                }
+            }
+        });
+
+        soundRef.current = sound;
+
+        return () => {
+            sound.unload(); // Clean up memory on unmount
+        };
+    }, [src]);
+
+    useEffect(() => {
+        const sound = soundRef.current;
+        if (!sound) return;
+
+        if (play) {
+            // Only play if not already playing to prevent overlapping instances
+            if (!sound.playing()) {
+                soundIdRef.current = sound.play();
+                sound.fade(0, volume, fadeDuration, soundIdRef.current);
+            }
+        } else {
+            // If it's playing, fade out and stop
+            if (sound.playing() && soundIdRef.current !== null) {
+                sound.fade(sound.volume(soundIdRef.current), 0, fadeDuration, soundIdRef.current);
+                
+                const currentId = soundIdRef.current;
+                setTimeout(() => {
+                    sound.stop(currentId);
+                }, fadeDuration);
+            }
+        }
+    }, [play, volume, fadeDuration]);
+}
+
+
+/* Converts latitude (N) and longitude (E) to map coordinates 
+    Reference: East-longitude system (NASA)
+*/
+function latLonToMapCoords(lat, lon) {
+    // Normalize longitude to [0, 360), then shift to the [-180, 180] range 
+    // centered on the Prime Meridian (0° is at the center of the map).
+    let normalizedLon = ((lon % 360) + 360) % 360;
+    if (normalizedLon > 180) {
+        normalizedLon -= 360;
+    }
+
+    // Map longitude (-180 to 180) to X (-1000 to 1000)
+    // Positive East longitude moves to the right (+X)
+    const x = (normalizedLon / 180) * 1000;
+
+    // Map latitude (90 North to -90 South) to Z (-500 to 500)
+    // North (+90) is at the top (-500), South (-90) is at the bottom (500)
+    const z = -(lat / 90) * 500;
+
+    return [x, 0, z];
+}
+
+
+
+// ========== CUSTOM ELEMENTS =====
+
+function SciFiUIContainer({ img, title, important, children, style, onClose }) {
     // Play sounds on mount and unmount
     React.useEffect(() => {
         if (important)      uiSounds.openImportant.play();
@@ -146,6 +240,9 @@ function SciFiUIContainer({ title, important, children, style, onClose }) {
                     [X]
                 </button>
             )}
+            {img && (
+                <img src={img} />
+            )}
             <motion.div variants={itemVariants} className="sci-fi-title">
                 {title}
             </motion.div>
@@ -161,19 +258,42 @@ function SciFiUIContainer({ title, important, children, style, onClose }) {
 }
 
 
-function EquipmentPin({ loaded, position, label, onClick }) {
-    const handleMouseEnter = () => {
-        // Generate a random number between 0 and 3
-        const randomIndex = Math.floor(Math.random() * uiSounds.mouse.length);
-        uiSounds.mouse[randomIndex].play();
-    };
+function SciFiToasts({ toasts }) {
+    return (
+        <div className="sci-fi-toast-container">
+            <AnimatePresence>
+                {toasts.map(toast => (
+                    <motion.div
+                        key={toast.id}
+                        layout
+                        initial={{ opacity: 0, x: 50, filter: "brightness(2)" }}
+                        animate={{ opacity: 1, x: 0, filter: "brightness(1)" }}
+                        exit={{ opacity: 0, x: 20, filter: "brightness(0)" }}
+                        transition={{ type: "spring", stiffness: 400, damping: 25 }}
+                        className={`sci-fi-toast toast-${toast.type}`}
+                    >
+                        <div className="toast-title">
+                            {toast.type === 'error' ? '⚠ ' : 
+                             toast.type === 'warning' ? '⬡ ' : 
+                             toast.type === 'success' ? '✔ ' : 'ℹ '}
+                            {toast.title}
+                        </div>
+                        {toast.description && <div className="toast-desc">{toast.description}</div>}
+                    </motion.div>
+                ))}
+            </AnimatePresence>
+        </div>
+    );
+}
 
+
+function EquipmentPin({ loaded, position, label, onClick }) {
     return (
         <Html position={position} zIndexRange={[10, 0]}>
             <div 
                 className={`map-pin ${loaded ? 'on-load' : ''}`}
                 onClick={onClick}
-                onMouseEnter={handleMouseEnter}
+                onMouseEnter={playSciFiMouseSound}
             >
                 <div className="pin-label">{label}</div>
             </div>
@@ -182,8 +302,71 @@ function EquipmentPin({ loaded, position, label, onClick }) {
 }
 
 
+function NavigationGizmo({ equipmentData, selectedEquipment, cameraTargetRef }) {
+    // We update the DOM directly in a fast loop to avoid killing React performance
+    useEffect(() => {
+        let animationFrameId;
+        const gizmoRadius = 70; // Half of the 140px CSS width
+        const mapRange = 600;   // How many 3D units the radius represents. Adjust to change "zoom" of the radar
 
-useGLTF.preload('/mars_terrain.glb');
+        const updateGizmo = () => {
+            if (!cameraTargetRef.current) return;
+            const target = cameraTargetRef.current;
+
+            equipmentData.forEach((eq, idx) => {
+                const el = document.getElementById(`gizmo-pin-${idx}`);
+                if (!el) return;
+
+                // Calculate distance from camera target to equipment pin
+                const dx = eq.coords[0] - target.x;
+                const dz = eq.coords[2] - target.z;
+                const dist = Math.sqrt(dx * dx + dz * dz);
+                
+                // Scale distance to gizmo pixels
+                let drawDist = (dist / mapRange) * gizmoRadius;
+                
+                // If it's outside the circle, clamp it to the edge
+                if (drawDist > gizmoRadius - 4) {
+                    drawDist = gizmoRadius - 4; 
+                }
+
+                // Calculate the angle and apply to the CSS transform
+                const angle = Math.atan2(dz, dx);
+                const x = Math.cos(angle) * drawDist;
+                const y = Math.sin(angle) * drawDist;
+                
+                // We use translate(-50%, -50%) natively in the transform to keep the pin centered on its coordinate
+                el.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px))`;
+            });
+
+            animationFrameId = requestAnimationFrame(updateGizmo);
+        };
+
+        updateGizmo();
+        return () => cancelAnimationFrame(animationFrameId);
+    }, [equipmentData]);
+
+    return (
+        <motion.div 
+            className="sci-fi-gizmo"
+            initial={{ opacity: 0, scale: 0.5 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.8, delay: 0.5, ease: "easeOut" }}
+        >
+            <div className="gizmo-crosshair"></div>
+            {equipmentData.map((eq, idx) => {
+                const isActive = selectedEquipment && selectedEquipment.name === eq.name;
+                return (
+                    <div 
+                        key={idx} 
+                        id={`gizmo-pin-${idx}`} 
+                        className={`gizmo-pin ${isActive ? 'active' : ''}`}
+                    />
+                );
+            })}
+        </motion.div>
+    );
+}
 
 
 function MarsTerrain() {
@@ -262,7 +445,37 @@ function MartianDust() {
 }
 
 
-function CustomMapControls({ focusTarget }) {
+function MartianFog() {
+    const materialRef = useRef()
+  
+    // Optional: animate time if you want to add noise/movement later
+    useFrame((state) => {
+        if (materialRef.current) {
+            materialRef.current.uTime = state.clock.elapsedTime
+        }
+    })
+  
+    return (
+        <mesh 
+            rotation={[-Math.PI / 2, 0, 0]} 
+            position={[0, 200, 0]} // Placed slightly above 0 to prevent z-fighting with ground
+        >
+            {/* 1000x500 plane with high segment density if needed for displacement later */}
+            <planeGeometry args={[5000, 5000, 16, 16]} />
+            <fogPlaneMaterial 
+                ref={materialRef} 
+                transparent={true} 
+                depthWrite={false} 
+                blending={THREE.NormalBlending}
+                // renderOrder ensures it draws cleanly relative to post-processing/terrain
+                renderOrder={999}
+            />
+        </mesh>
+    )
+}
+
+
+function CustomMapControls({ focusTarget, cameraTargetRef }) {
     const controlsRef = useRef();
     const limitX = 1000 / 1.5; 
     const limitZ = 500 / 1.5; 
@@ -272,8 +485,13 @@ function CustomMapControls({ focusTarget }) {
             const controls = controlsRef.current;
             const camera = state.camera;
             const target = controls.target;
+            
+            // Export target coordinates to the gizmo
+            if (cameraTargetRef) {
+                cameraTargetRef.current.copy(target);
+            }
 
-            // DYNAMIC ZOOM TILT (Remains the same)
+            // Dynamic zoom tilt
             const distance = camera.position.distanceTo(target);
             const targetAngle = THREE.MathUtils.mapLinear(
                 distance, 450, 800, Math.PI / 3.2, Math.PI / 4.2    
@@ -287,7 +505,7 @@ function CustomMapControls({ focusTarget }) {
                 target.x = THREE.MathUtils.lerp(target.x, focusTarget[0], 0.03);
                 target.z = THREE.MathUtils.lerp(target.z, focusTarget[2], 0.03);
                 
-                // Optional: Slightly pull the camera in closer for inspection
+                // Slightly pull the camera in closer for inspection
                 const zoomTarget = 500; 
                 if (distance > zoomTarget) {
                     camera.position.lerp(
@@ -333,116 +551,16 @@ function CustomMapControls({ focusTarget }) {
 }
 
 
-export function MartianFog() {
-    const materialRef = useRef()
-  
-    // Optional: animate time if you want to add noise/movement later
-    useFrame((state) => {
-        if (materialRef.current) {
-            materialRef.current.uTime = state.clock.elapsedTime
-        }
-    })
-  
-    return (
-        <mesh 
-            rotation={[-Math.PI / 2, 0, 0]} 
-            position={[0, 200, 0]} // Placed slightly above 0 to prevent z-fighting with ground
-        >
-            {/* 1000x500 plane with high segment density if needed for displacement later */}
-            <planeGeometry args={[5000, 5000, 16, 16]} />
-            <fogPlaneMaterial 
-                ref={materialRef} 
-                transparent={true} 
-                depthWrite={false} 
-                blending={THREE.NormalBlending}
-                // renderOrder ensures it draws cleanly relative to post-processing/terrain
-                renderOrder={999}
-            />
-        </mesh>
-    )
-}
 
-
-function useAmbientAudio(src, play, volume = 0.4, fadeDuration = 2000) {
-    const soundRef = useRef(null);
-    const soundIdRef = useRef(null);
-
-    useEffect(() => {
-        // Initialize the Web Audio API sound
-        const sound = new Howl({
-            src: [src],
-            loop: true,
-            volume: 0, // Start at 0 for the fade-in
-            html5: false,
-            onload: () => {
-                // If 'play' became true while it was still loading, start playing now
-                if (play && !sound.playing()) {
-                    soundIdRef.current = sound.play();
-                    sound.fade(0, volume, fadeDuration, soundIdRef.current);
-                }
-            }
-        });
-
-        soundRef.current = sound;
-
-        return () => {
-            sound.unload(); // Clean up memory on unmount
-        };
-    }, [src]);
-
-    useEffect(() => {
-        const sound = soundRef.current;
-        if (!sound) return;
-
-        if (play) {
-            // Only play if not already playing to prevent overlapping instances
-            if (!sound.playing()) {
-                soundIdRef.current = sound.play();
-                sound.fade(0, volume, fadeDuration, soundIdRef.current);
-            }
-        } else {
-            // If it's playing, fade out and stop
-            if (sound.playing() && soundIdRef.current !== null) {
-                sound.fade(sound.volume(soundIdRef.current), 0, fadeDuration, soundIdRef.current);
-                
-                const currentId = soundIdRef.current;
-                setTimeout(() => {
-                    sound.stop(currentId);
-                }, fadeDuration);
-            }
-        }
-    }, [play, volume, fadeDuration]);
-}
-
-
-/* Converts latitude (N) and longitude (E) to map coordinates */
-function latLonToMapCoords(lat, lon) {
-    // 1. Normalize longitude to [0, 360), then shift to the [-180, 180] range 
-    // centered on the Prime Meridian (0° is at the center of the map).
-    let normalizedLon = ((lon % 360) + 360) % 360;
-    if (normalizedLon > 180) {
-        normalizedLon -= 360;
-    }
-
-    // 2. Map longitude (-180 to 180) to X (-1000 to 1000)
-    // Positive East longitude moves to the right (+X)
-    const x = (normalizedLon / 180) * 1000;
-
-    // 3. Map latitude (90 North to -90 South) to Z (-500 to 500)
-    // North (+90) is at the top (-500), South (-90) is at the bottom (500)
-    const z = -(lat / 90) * 500;
-
-    return [x, 0, z];
-}
-
-  
-
+// =========== MAIN FUNCTION ==========
 
 export default function App() {
     // State to track if the user has clicked to enter the experience
     const [entered, setEntered] = useState(false);
     const [selectedEquipment, setSelectedEquipment] = useState(null);
+    const [toasts, setToasts] = useState([]);
 
+    const cameraTargetRef = useRef(new THREE.Vector3(0, 0, 0));
 
     const [equipmentData, setEquipmentData] = useState([
         {
@@ -488,16 +606,32 @@ export default function App() {
         setEquipmentData(equipmentData);
     }, []);
 
-    useEffect(() => {console.log("selected:",selectedEquipment)}, [selectedEquipment]);
-
 
     // Mounts the audio in memory and fades it in when 'entered' becomes true
     useAmbientAudio('/mars_ambience.mp3', entered, 0.1, 3000);
+    
+    
+    // Toast Manager
+    const addToast = (type, title, description) => {
+        const id = Date.now() + Math.random();
+        setToasts(prev => [...prev, { id, type, title, description }]);
+        
+        // Play corresponding sound
+        if (type === 'error') uiSounds.error.play();
+        else uiSounds.open.play();
+        
+        // Auto-dismiss after 4 seconds
+        setTimeout(() => {
+            setToasts(prev => prev.filter(t => t.id !== id));
+        }, 4000);
+    };
 
 
     return (
         <div className="canvas-container">
             <div className="vignette-overlay"></div>
+            
+            <SciFiToasts toasts={toasts} />
             
             <AnimatePresence>
                 {!entered && (
@@ -514,6 +648,7 @@ export default function App() {
                         }}
                     >
                         <button 
+                            onMouseEnter={playSciFiMouseSound}
                             onClick={() => setEntered(true)}
                             className='sci-fi-button'
                         >
@@ -527,21 +662,17 @@ export default function App() {
             <AnimatePresence>
                 {entered && (
                     <div style={{ position: 'absolute', top: '40px', left: '40px', zIndex: 20 }}>
-                        <SciFiUIContainer title="Project VantaLumen" style={{ width: '300px', marginBottom: '20px' }}>
+                        <SciFiUIContainer img="/vantalumen.png" title="Project VantaLumen" style={{ width: '300px', marginBottom: '20px' }}>
                             <p>LOCATION: ISIDIS PLANITIA, MARS</p>
                             <p>HQ: VANTALUMEN</p>
                             <p>ATMOSPHERE: 95% CO2</p>
                             <p>SURFACE TEMP: -60°C</p>
-                            <p className="sci-fi-blinking-text">AWAITING TARGET SELECTION...</p>
+                            {selectedEquipment ?
+                                <p>TARGET: {selectedEquipment.name.toUpperCase()}</p>
+                                :
+                                <p className="sci-fi-blinking-text">AWAITING TARGET SELECTION...</p>
+                            }
                         </SciFiUIContainer>
-
-                        {/* A second container will naturally render with the same flash/stagger */}
-                        {/*
-                        <SciFiUIContainer title="Attributions" style={{ width: '300px' }}>
-                            <p>AMBIENCE: </p>
-                            <p>DEGRADATION: 14%</p>
-                        </SciFiUIContainer>
-                        */}
                     </div>
                 )}
             </AnimatePresence>
@@ -550,7 +681,17 @@ export default function App() {
                 <div className="ui-layer sci-fi-subtitle">
                     <p>MARTIAN TERRAIN</p>
                 </div>
-            )}  
+            )}
+
+
+            {/* Navigation gizmo */}
+            {entered && (
+                <NavigationGizmo 
+                    equipmentData={equipmentData} 
+                    selectedEquipment={selectedEquipment} 
+                    cameraTargetRef={cameraTargetRef} 
+                />
+            )}
 
 
             <AnimatePresence>
@@ -568,6 +709,22 @@ export default function App() {
                             <p>MISSION: {selectedEquipment.mission}</p>
                             <br/>
                             <p style={{ color: '#aaa' }}>{selectedEquipment.description}</p>
+                            <br/>
+                            <button 
+                                onMouseEnter={playSciFiMouseSound}
+                                onClick={() => {
+                                    // NOTE: Feature not yet supported, so we'll emit an error
+                                    uiSounds.error.play();
+                                    addToast(
+                                        'error', 
+                                        'INSPECTION FAILED', 
+                                        'Feature is not currently supported.'
+                                    );
+                                }}
+                                className='sci-fi-button'
+                            >
+                                <span>INSPECT [N/A]</span>
+                            </button>
                         </SciFiUIContainer>
                     </div>
                 )}
@@ -579,7 +736,7 @@ export default function App() {
                 <color attach="background" args={['#c7a47b']} />
 
                 <Suspense fallback={null}>
-                    {/* Render the Pin on the map. Render this conditionally if you want it to hide when clicked */}
+                    {/* Render equipment pins */}
                     {equipmentData.map(
                         (eq, idx) => (
                             <EquipmentPin
@@ -613,14 +770,11 @@ export default function App() {
                     </EffectComposer>
                 </Suspense>
 
-                {/* Pass the selected equipment state to the controls to trigger the swoop */}
+
                 {entered && (
                     <CustomMapControls
-                        focusTarget={
-                            selectedEquipment ? 
-                            selectedEquipment.coords
-                            : null
-                        } 
+                        focusTarget={selectedEquipment ? selectedEquipment.coords : null} 
+                        cameraTargetRef={cameraTargetRef}
                     />
                 )}
             </Canvas>
